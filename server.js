@@ -1,10 +1,30 @@
 const express = require('express');
-const fs = require('fs');
+const { MongoClient } = require('mongodb');
 const path = require('path');
 const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+const MONGODB_URI = "mongodb+srv://tracker-backend:Tracker%400987@cluster0.bliy5gt.mongodb.net/?appName=Cluster0";
+let db;
+
+// Function to connect to MongoDB
+async function connectDB() {
+    try {
+        const client = await MongoClient.connect(MONGODB_URI);
+        db = client.db('trackerDB'); // The name of your database
+        console.log("✅ MongoDB successfully connected!");
+
+        // Start the server ONLY AFTER the database connection is established
+        app.listen(PORT, () => {
+            console.log(`Server running on port ${PORT}`);
+        });
+
+    } catch (err) {
+        console.error("❌ MongoDB connection failed:", err);
+        process.exit(1);
+    }
+}
 // ================= MIDDLEWARE =================
 
 // 1. Enable CORS for ALL domains
@@ -34,30 +54,29 @@ app.use(express.json());
 // ================= ROUTES =================
 
 // The endpoint matches the one in your tracker.js config
-app.post('/collect', (req, res) => {
-    const analyticsData = req.body;
+app.post('/api/sync', async (req, res) => {
+    console.log("1. Request hit the route!"); // <--- Debug 1
 
-    // Add a server-side timestamp for accuracy
+    const analyticsData = req.body;
     analyticsData.received_at = new Date().toISOString();
-    
-    // Get user IP (useful for geolocation later)
     analyticsData.user_ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
-    // Convert to a single string line
-    const logEntry = JSON.stringify(analyticsData) + '\n';
+    try {
+        console.log("2. Attempting to insert into DB..."); // <--- Debug 2
+        
+        // --- THIS IS LIKELY WHERE IT HANGS ---
+        await db.collection('events').insertOne(analyticsData);
+        // -------------------------------------
 
-    // File path: logs/events.jsonl
-    const logFilePath = path.join(__dirname, 'logs', 'events.jsonl');
-
-    // Append the data to the file
-    fs.appendFile(logFilePath, logEntry, (err) => {
-        if (err) {
-            console.error('Error writing to file:', err);
-            return res.status(500).send('Server Error');
-        }
-        console.log(`[Data Received] From: ${analyticsData.url}`);
+        console.log("3. Insert successful!"); // <--- Debug 3
+        
+        console.log(`[Data Received & Logged] Session: ${analyticsData.session_id}`);
         return res.status(200).send('Logged successfully');
-    });
+
+    } catch (err) {
+        console.error("❌ ERROR inside route:", err); // <--- Catch errors
+        return res.status(500).send('Database Error');
+    }
 });
 
 // Simple check to see if server is running
@@ -65,30 +84,26 @@ app.get('/', (req, res) => {
     res.send('Analytics Server is Running...');
 });
 
-// CHANGE 2: Add a route to READ the logs from the browser
-app.get('/view-logs', (req, res) => {
-    const logFilePath = path.join(__dirname, 'logs', 'events.jsonl');
-    
-    // Check if file exists
-    if (!fs.existsSync(logFilePath)) {
-        return res.status(404).send('No logs found yet.');
-    }
+// ✅ CORRECT MONGODB ROUTE
+app.get('/view-logs', async (req, res) => {
+    try {
+        // Query the 'events' collection in MongoDB
+        const logs = await db.collection('events').find().toArray();
+        
+        if (logs.length === 0) {
+            return res.status(404).send('No logs found yet in the database.');
+        }
 
-    // Read the file and send it to the browser
-    fs.readFile(logFilePath, 'utf8', (err, data) => {
-        if (err) return res.status(500).send('Error reading logs');
-        // Wrap in <pre> tags so it looks readable in browser
-        res.send(`<pre>${data}</pre>`);
-    });
+        // Format the output nicely for the browser
+        const formattedData = logs.map(doc => JSON.stringify(doc)).join('\n');
+        res.send(`<pre>${formattedData}</pre>`);
+
+    } catch (err) {
+        console.error('Error querying MongoDB:', err);
+        res.status(500).send('Database Query Error');
+    }
 });
 
 // ================= STARTUP =================
 
-// Create 'logs' folder if it doesn't exist
-if (!fs.existsSync(path.join(__dirname, 'logs'))) {
-    fs.mkdirSync(path.join(__dirname, 'logs'));
-}
-
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+connectDB();
