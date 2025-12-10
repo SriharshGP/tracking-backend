@@ -3,9 +3,10 @@ const { MongoClient } = require('mongodb');
 const path = require('path');
 const cors = require('cors');
 const app = express();
+require('dotenv').config();
 const PORT = process.env.PORT || 3000;
 
-const MONGODB_URI = "mongodb+srv://tracker-backend:Tracker%400987@cluster0.bliy5gt.mongodb.net/?appName=Cluster0";
+const MONGODB_URI = process.env.MONGO_URI;
 let db;
 
 // Function to connect to MongoDB
